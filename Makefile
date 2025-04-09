@@ -1,77 +1,99 @@
 # Configuration
 PROJECT = GAUS_app
-LIBPROJECT = $(PROJECT).a
+LIBPROJECT = lib$(PROJECT).a
 TESTPROJECT = test-$(PROJECT)
-TEST_SCRIPT = test/test.sh
+
+# Option
+USE_BLAS = 1
+ONE = 1
+
+# Debug print: show the value Make is actually using
+$(info Value of USE_BLAS detected by make: [$(USE_BLAS)])
 
 # Directories
 SRC_DIR = src
 TEST_DIR = tests
 INC_DIR = include
+EXT_DIR = externals
 
 # Tools
 CXX = g++
-A = ar
-AFLAGS = crs
+AR = ar 
+ARFLAGS = crs
 
 # Flags
-CXXFLAGS = -I. -std=c++17 -Wall -g -fPIC -Werror -Wpedantic -Iinclude
-LDXXFLAGS = $(CXXFLAGS) -lpthread
-LDGTESTFLAGS = $(CXXFLAGS) -lgtest -lgtest_main -lpthread
+CXXFLAGS = -I. -I$(INC_DIR) -I$(EXT_DIR)/eigen -I$(EXT_DIR)/lazycsv/include
+CXXFLAGS += -std=c++17 -Wall -g -fPIC -Werror -Wpedantic -O3
+CXXFLAGS += -DPROJECT_NAME="\"$(PROJECT)\"" 
+
+LDLIBS_BASE = -lpthread
+
+# --- BLAS/LAPACK ---
+LDLIBS_BLAS = 
+ifeq ($(USE_BLAS),$(ONE))
+    CXXFLAGS += -DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE
+    LDLIBS_BLAS += -lopenblas -llapacke # Adds BLAS/LAPACK libs
+    INFO_MSG = " BLAS_ENABLED"          
+else
+    INFO_MSG = " BLAS_DISABLED"         
+endif
+
+# Линковка приложения
+LDAPPFLAGS = $(LDLIBS_BASE) $(LDLIBS_BLAS)
+LDGTESTFLAGS = $(LDLIBS_BASE) $(LDLIBS_BLAS) -lgtest -lgtest_main
 
 # Source Files
-SRC = $(wildcard $(SRC_DIR)/*.cpp) 
-
-# Split sources: Application (main.cpp) and Library (others)
 APP_SRC = $(SRC_DIR)/main.cpp
-LIB_SRC = $(filter-out $(APP_SRC), $(SRC))
-LIB_OBJ = $(LIB_SRC:.cpp=.o)
-APP_OBJ = $(APP_SRC:.cpp=.o)
+LIB_SRC = $(filter-out $(APP_SRC), $(wildcard $(SRC_DIR)/*.cpp))
+TEST_SRC = $(wildcard $(TEST_DIR)/*.cpp)
 
-TEST_SRC = $(TEST_DIR)/test-$(PROJECT).cpp
-TEST_OBJ = $(TEST_SRC:.cpp=.o)
+APP_OBJ = $(notdir $(APP_SRC:.cpp=.o))
+LIB_OBJ = $(notdir $(LIB_SRC:.cpp=.o))
+TEST_OBJ = $(notdir $(TEST_SRC:.cpp=.o))
 
-# Dependencies
+# Dependencies 
 DEPS = $(wildcard $(INC_DIR)/*.h)
 
 # Targets
-.PHONY: all test integration-test clean cleanall
+.PHONY: all test clean cleanall info
 
-all: $(PROJECT)
+all: info $(PROJECT)
+
+info:
+	@echo "Building project $(PROJECT) $(INFO_MSG)..."
 
 # Build application
 $(PROJECT): $(APP_OBJ) $(LIBPROJECT)
-	$(CXX) -o $@ $(APP_OBJ) $(LIBPROJECT) $(LDXXFLAGS)
+	@echo "Linking application $(PROJECT)..."
+	$(CXX) -o $@ $(APP_OBJ) $(LIBPROJECT) $(LDAPPFLAGS)
 
-
-# Build static library
 $(LIBPROJECT): $(LIB_OBJ)
-	$(A) $(AFLAGS) $@ $^
+	@echo "Creating library $(LIBPROJECT)..."
+	$(AR) $(ARFLAGS) $@ $^
 
-# Build test
 $(TESTPROJECT): $(TEST_OBJ) $(LIBPROJECT)
+	@echo "Linking test executable $(TESTPROJECT)..."
 	$(CXX) -o $@ $(TEST_OBJ) $(LIBPROJECT) $(LDGTESTFLAGS)
 
-# Run tests
 test: $(TESTPROJECT)
 	@echo "Running unit tests..."
 	@./$(TESTPROJECT)
 
-integration-test: $(PROJECT) $(TEST_SCRIPT)
-	@echo "Running integration tests..."
-	@chmod +x $(TEST_SCRIPT)
-	@./$(TEST_SCRIPT)
-
-testall: test integration-test
-
-# Compile C++ files
-%.o: %.cpp $(DEPS)
+$(APP_OBJ) $(LIB_OBJ): %.o: $(SRC_DIR)/%.cpp $(DEPS)
+	@echo "Compiling $< -> $@..."
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
+
+$(TEST_OBJ): %.o: $(TEST_DIR)/%.cpp $(DEPS)
+	@echo "Compiling $< -> $@..."
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
+
 
 # Clean rules
 clean:
+	@echo "Cleaning object files..."
 	rm -f $(APP_OBJ) $(LIB_OBJ) $(TEST_OBJ)
 
 cleanall: clean
+	@echo "Cleaning executables and library..."
 	rm -f $(PROJECT) $(LIBPROJECT) $(TESTPROJECT)
-	rm -rf test_data
+	rm -rf *.csv
